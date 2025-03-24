@@ -160,36 +160,19 @@ elif input_type == "Video":
             video.release()
 
 elif input_type == "Webcam":
-    # Check if the webcam is available
-    video_capture = cv2.VideoCapture(0)
+    # Use Streamlit's camera input
+    camera_input = st.camera_input("Take a picture")
     
-    if video_capture.isOpened():
-        st.write("Webcam is available")
-        run_detection = st.checkbox("Start Detection")
+    if camera_input is not None:
+        # Convert the captured image to a numpy array
+        image = np.array(Image.open(camera_input))
         
-        stframe = st.empty()
-        
-        while run_detection:
-            ret, frame = video_capture.read()
-            if not ret:
-                st.error("Failed to capture frame from webcam")
-                break
-            
-            # Run detection on the frame
-            results = detect_objects(frame, conf_threshold, iou_threshold)
-            
-            # Get the frame with detections
-            res_plotted = results.plot()
-            
-            # Convert from BGR to RGB
-            res_plotted_rgb = cv2.cvtColor(res_plotted, cv2.COLOR_BGR2RGB)
-            
-            # Display the frame with detections
-            stframe.image(res_plotted_rgb, caption="Detection Results", use_column_width=True)
-        
-        video_capture.release()
+        # Process the image
+        with st.spinner("Detecting objects..."):
+            results = detect_objects(image, conf_threshold, iou_threshold)
+            display_results(results, image)
     else:
-        st.error("Webcam is not available")
+        st.info("Camera is ready. Click the button to capture an image.")
 
 # Add information about the project
 st.sidebar.markdown("---")
