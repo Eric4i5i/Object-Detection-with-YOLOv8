@@ -94,7 +94,7 @@ def display_results(results, image):
     else:
         st.info("No objects detected")
 
-# Video processor class for WebRTC - optimized for mobile
+# Updated Video processor class for WebRTC - optimized for mobile
 class YOLOVideoProcessor(VideoProcessorBase):
     def __init__(self, model, conf_threshold, iou_threshold):
         self.model = model
@@ -102,24 +102,32 @@ class YOLOVideoProcessor(VideoProcessorBase):
         self.iou_threshold = iou_threshold
         self.frame_count = 0
         self.last_process_time = time.time()
-        
+        self.last_frame = None  # Store the last processed frame for debugging
+    
     def recv(self, frame):
-        img = frame.to_ndarray(format="bgr24")
-        self.frame_count += 1
-        
-        current_time = time.time()
-        # Process every 3rd frame on mobile for better performance
-        if self.frame_count % 3 == 0 or current_time - self.last_process_time > 0.5:
-            # Run YOLO detection
-            results = self.model(img, conf=self.conf_threshold, iou=self.iou_threshold)[0]
-            # Draw the detection results on the frame
-            annotated_frame = results.plot()
-            self.last_process_time = current_time
-        else:
-            # Skip processing for better performance
-            annotated_frame = img
+        try:
+            img = frame.to_ndarray(format="bgr24")
+            self.frame_count += 1
             
-        return av.VideoFrame.from_ndarray(annotated_frame, format="bgr24")
+            current_time = time.time()
+            # Process every 3rd frame on mobile for better performance
+            if self.frame_count % 3 == 0 or current_time - self.last_process_time > 0.5:
+                # Run YOLO detection
+                results = self.model(img, conf=self.conf_threshold, iou=self.iou_threshold)[0]
+                # Draw the detection results on the frame
+                annotated_frame = results.plot()
+                self.last_process_time = current_time
+                self.last_frame = av.VideoFrame.from_ndarray(annotated_frame, format="bgr24")
+            else:
+                # Skip processing for better performance
+                annotated_frame = img
+                self.last_frame = av.VideoFrame.from_ndarray(annotated_frame, format="bgr24")
+            
+            return self.last_frame
+        except Exception as e:
+            # Log any errors during frame processing
+            st.error(f"Error processing frame: {e}")
+            return frame  # Return the original frame if processing fails
 
 # Input selection - simplified mobile UI with tabs
 tab1, tab2, tab3 = st.tabs(["📸 Camera", "🖼️ Image", "🎥 Video"])
@@ -165,6 +173,9 @@ with tab1:
             "audio": False,
         }
         
+        # Add a placeholder for the video feed
+        video_placeholder = st.empty()
+        
         # Create the WebRTC streamer with mobile optimizations
         webrtc_ctx = webrtc_streamer(
             key="yolov8-mobile-detection",
@@ -178,10 +189,30 @@ with tab1:
             async_processing=True,
         )
         
+        # Add debugging information
         if webrtc_ctx.state.playing:
             st.success("Camera active - detecting objects")
+            # Check if the video processor is receiving frames
+            if webrtc_ctx.video_processor:
+                st.write("Video processor is active.")
+            else:
+                st.error("Video processor not initialized.")
         else:
             st.info("Click 'Start' to begin camera detection")
+            st.warning("If the camera doesn't start, ensure camera permissions are granted in your browser.")
+        
+        # Display the video feed manually if needed
+        if webrtc_ctx.video_processor:
+            try:
+                frame = webrtc_ctx.video_processor.last_frame
+                if frame is not None:
+                    # Convert the frame to an image and display it
+                    frame_rgb = cv2.cvtColor(frame.to_ndarray(format="bgr24"), cv2.COLOR_BGR2RGB)
+                    video_placeholder.image(frame_rgb, caption="Live Stream with Detections", use_column_width=True)
+                else:
+                    st.warning("No frames received yet. Ensure the camera is working and permissions are granted.")
+            except AttributeError:
+                st.error("Error accessing the last frame. The video processor might not be processing frames correctly.")
 
 with tab2:
     st.write("Upload an image to detect objects")
