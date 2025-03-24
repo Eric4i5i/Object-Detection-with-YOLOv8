@@ -5,6 +5,8 @@ from PIL import Image
 import io
 import tempfile
 from ultralytics import YOLO
+import av
+from streamlit_webrtc import webrtc_streamer, VideoProcessorBase, RTCConfiguration
 
 # Set page configuration
 st.set_page_config(
@@ -95,6 +97,26 @@ def display_results(results, image):
     else:
         st.info("No objects detected.")
 
+# Video processor class for WebRTC
+class YOLOVideoProcessor(VideoProcessorBase):
+    def __init__(self, model, conf_threshold, iou_threshold):
+        self.model = model
+        self.conf_threshold = conf_threshold
+        self.iou_threshold = iou_threshold
+        self.detection_results = None
+
+    def recv(self, frame):
+        img = frame.to_ndarray(format="bgr24")
+        
+        # Run YOLO detection
+        results = self.model(img, conf=self.conf_threshold, iou=self.iou_threshold)[0]
+        self.detection_results = results
+        
+        # Draw the detection results on the frame
+        annotated_frame = results.plot()
+        
+        return av.VideoFrame.from_ndarray(annotated_frame, format="bgr24")
+
 # Input selection
 input_type = st.radio("Select Input Type", ("Image", "Video", "Webcam"))
 
@@ -160,19 +182,40 @@ elif input_type == "Video":
             video.release()
 
 elif input_type == "Webcam":
-    # Use Streamlit's camera input
-    camera_input = st.camera_input("Take a picture")
+    st.write("Real-time Webcam Object Detection")
     
-    if camera_input is not None:
-        # Convert the captured image to a numpy array
-        image = np.array(Image.open(camera_input))
-        
-        # Process the image
-        with st.spinner("Detecting objects..."):
-            results = detect_objects(image, conf_threshold, iou_threshold)
-            display_results(results, image)
-    else:
-        st.info("Camera is ready. Click the button to capture an image.")
+    # Create a placeholder for displaying detection results
+    detection_placeholder = st.empty()
+    info_placeholder = st.empty()
+    
+    # WebRTC configuration
+    rtc_config = RTCConfiguration(
+        {"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]}
+    )
+    
+    # Create the WebRTC streamer
+    webrtc_ctx = webrtc_streamer(
+        key="yolov8-detection",
+        video_processor_factory=lambda: YOLOVideoProcessor(
+            model=model,
+            conf_threshold=conf_threshold,
+            iou_threshold=iou_threshold
+        ),
+        rtc_configuration=rtc_config,
+        media_stream_constraints={"video": True, "audio": False},
+        async_processing=True,
+    )
+    
+    # Display information about detection
+    if webrtc_ctx.video_processor:
+        # Display detected objects
+        if st.checkbox("Show Detection Details", value=True):
+            # This will keep updating
+            if webrtc_ctx.state.playing:
+                info_text = "Stream is active. Detection results will appear here in real-time."
+                info_placeholder.info(info_text)
+            else:
+                info_placeholder.info("Click 'Start' to begin webcam detection.")
 
 # Add information about the project
 st.sidebar.markdown("---")
